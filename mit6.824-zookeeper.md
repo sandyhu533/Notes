@@ -59,7 +59,7 @@ The ZooKeeper interface enables a high-performance service implementation. In ad
 
     a client's successive reads execute at non-decreasing points in the order，即使当client切换replica的时候也不会读到旧的版本。因为client本地会保存当前读到的最新的'zxid'，换replica的时候会讲自己读到的zxid号发过去。
 
-    a client's read executes after all previous writes by that client
+    a client's read executes after all previous writes by that client.
 
 ### 
 
