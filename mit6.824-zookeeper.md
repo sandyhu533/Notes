@@ -1,14 +1,14 @@
 # MIT6.824 - Zookeeper
 
-# Paper: ZooKeeper: Wait-free coordination for Internet-scale systems\(2010\)
+## Paper: ZooKeeper: Wait-free coordination for Internet-scale systems\(2010\)
 
 [http://nil.csail.mit.edu/6.824/2020/papers/zookeeper.pdf](http://nil.csail.mit.edu/6.824/2020/papers/zookeeper.pdf)
 
-# Introduction
+## Introduction
 
 The ZooKeeper interface enables a high-performance service implementation. In addition to the wait-free property, ZooKeeper provides a per client guarantee of FIFO execution of requests and linearizability for all requests that change the ZooKeeper state. These design decisions enable the implementation of a high performance processing pipeline with read requests being satisfied by local servers.
 
-## Raft Review
+### Raft Review
 
 回顾Raft，Raft确实是一个能够保证linearizability的系统，但当Raft增加了机器的数量时，他的效率得到提高了么？
 
@@ -25,11 +25,11 @@ The ZooKeeper interface enables a high-performance service implementation. In ad
 
 在这个基础上ZooKeeper希望能够提高效率，提高效率的方式是改变强一致性的定义。
 
-## Zookeeper
+### Zookeeper
 
 在大多数场景下，我们只需要考虑一个客户看到的操作是linearizability就行，对于不同的客户有的看到的相对新，有的看到的相对旧其实没有那么关键。也就是在上面提到的有关Raft粗暴版本的read优化里的几个问题，对于问题1是能够容忍的，主要解决2、3、4。保证单个client读操作的顺序。
 
-# Ordering Guarantees
+## Ordering Guarantees
 
 * Linearizable writes
 
@@ -61,7 +61,7 @@ The ZooKeeper interface enables a high-performance service implementation. In ad
 
     a client's read executes after all previous writes by that client，如果一个client先发了一个write再发了一个read同样的路径，为了保证FIFIO，read必须等write执行完再读。
 
-## Why does this make sense?
+### Why does this make sense?
 1. sync() 能够让client同步到最新的log，通过leader进入系统并commit到别的replica，sync后面的读会确保在sync之后；
 2. Writes are well-behaved, e.g. exclusive test-and-set operations
     writes really do execute in order, on latest data.
@@ -90,7 +90,7 @@ The ZooKeeper interface enables a high-performance service implementation. In ad
 ``` 
 watch=true会让这个文件被删除或者修改时（实际上是replica在log中看到与这些操作有关的entry时会停止执行read，先向client发通知）向client发通知。实际上replica会自己缓存一个watch table缓存所有的watch。
    当client切换副本时，会将之前的watch所执行到的zxid发到新的副本，来保证上下文一致。
-## Consequeces
+### Consequeces
 Leader must preserve client write order across leader failure.
 Replicas must enforce "a client's reads never go backwards in zxid order"
   despite replica failure.
@@ -98,10 +98,10 @@ Client must track highest zxid it has read
   to help ensure next read doesn't go backwards
   even if sent to a different replica
 
-# The ZooKeeper service
+## The ZooKeeper service
 ZooKeeper客户端库通过客户端API向ZooKeeper提交请求，在本节中，我们首先提供ZooKeeper服务的高级视图。 然后讨论客户端用于与ZooKeeper交互的API。
 
-## Service overview
+### Service overview
 ZooKeeper为其客户端提供了一组数据节点（znode）的抽象，这些节点根据分层名称空间进行组织，而这些层次中的znode是客户端通过ZooKeeper API操作的数据对象。分层名称空间通常用于文件系统。 它是组织数据对象的理想方式。
 ![img](.gitbook/assets/zookeeper_fig1.png)
 客户端能创建两种ZooKeeper节点：持久节点和临时节点。
@@ -112,17 +112,17 @@ ZooKeeper实现了watches，允许客户在不需要轮询的情况下及时收�
 
 例如，如果客户端在”/foo”更改两次之前发出getData(“/foo”，true)，则客户端将获得一个监视事件，告知客户端”/foo”的数据已更改。
 
-## Data Model
+### Data Model
 
 ZooKeeper的数据模型本质上是一个文件系统，它具有简单的API，完整的数据读写和带有分层key的键值表。与文件系统中的文件不同，znode不是为通用数据存储而设计的。相反，znodes是映射到客户端应用程序的抽象，通常对应于用于协调目的的元数据。以上图为例，我们有两个子树，一个用于应用程序1(/app1)，另一个用于应用程序2(/app2)。应用程序1的子树实现了一个简单的组成员协议：每个客户端进程pi在/app1下创建一个znode pi，只要进程正在运行，它就会持续存在。
 
 尽管znode尚未设计用于通用数据存储，但ZooKeeper确实允许客户端存储一些可用于元数据或分布式计算中所配置的信息。
 
-## Sessions
+### Sessions
 
 客户端连接到ZooKeeper之后会启动一个session，session具有一个超时机制，如果客户端在其session中没有收到该超时机制的相关内容，ZooKeeper会认为客户端有故障。当客户端显式关闭session handler或ZooKeeper检测到客户端出现故障时，session结束。
 
-## Client API
+### Client API
 ``` 
      
 create(path, data, flags)：创建一个相关路径的znode；
@@ -142,8 +142,8 @@ sync(path)：使得client当前连接着的ZooKeeper服务器，和ZooKeeper的L
 
 所有方法都具有同步和异步版本。每种更新方法都采用预期的版本号，这样可以实现条件更新。如果znode的实际版本号与预期版本号不匹配，则更新将失败并显示版本错误。如果版本号为-1，则不执行版本检查。
 
-# Example
-## Example: add one to a number stored in a ZooKeeper znode
+## Example
+### Example: add one to a number stored in a ZooKeeper znode
   what if the read returns stale data?
     write will write the wrong value!
   what if another client concurrently updates?
@@ -158,7 +158,7 @@ sync(path)：使得client当前连接着的ZooKeeper服务器，和ZooKeeper的L
     effect is atomic read-modify-write
   lots of variants, e.g. test-and-set for VMware-FT
 
-## Example: Simple Locks (Section 2.4)
+### Example: Simple Locks (Section 2.4)
   acquire():
 ``` 
     while true:
@@ -174,7 +174,7 @@ sync(path)：使得client当前连接着的ZooKeeper服务器，和ZooKeeper的L
 
 羊群效应(Herd Effect)：当很多个client如1000个都想请求锁的时候大家都在监听exist()，都会收到通知，然后master会收到1000个create()
 
-## Example: Locks without Herd Effect (Scalable Lock)
+### Example: Locks without Herd Effect (Scalable Lock)
   (look at pseudo-code in paper, Section 2.4, page 6)
 ```
     1. create a "sequential" file (ephemeral)
