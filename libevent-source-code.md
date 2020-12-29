@@ -2,9 +2,9 @@
 description: 阅读libevent源码过程中的一些记录
 ---
 
-# Libevent - Source Code \(1\)
+# Libevent - Source Code
 
-## Log模块
+### Log模块
 
 相关文件：
 
@@ -12,6 +12,35 @@ description: 阅读libevent源码过程中的一些记录
 log-internal.h
 log.c
 ```
+
+首先看到了文件里有
+
+```
+#ifdef __GNUC__
+#define EV_CHECK_FMT(a,b) __attribute__((format(printf, a, b)))
+#define EV_NORETURN __attribute__((noreturn))
+#endif
+```
+
+这样的宏。
+
+`__GNUC__`指的是用GNU编译器来编译，`__attribute__((xxx))`是利用GNU编译器提供的一些特性，比如：
+
+`__attribute__((xxx))`告诉编译器这个函数不会返回，因而编译器可以做一些优化；
+
+`__attribute__((format(printf, a, b)))`是对a,b进行格式化检查，printf()的第一个参数是字符串格式，第二个参数是可变参数，将需要用到的变量都传进来。在函数后面加上了这个检查后会在编译期间检查出格式和可变参数是否对应；
+
+可以看到`log-internal.h`里面出现了`...`可变参数，这是c++由c中继承来的特性，用`...`来表示可变参数。
+
+以下是一些关于c风格的可变参数的资料：
+
+> C/C++支持函数的可变参数列表，这个可变参数列表是通过宏来实现的，这些宏定义在头文件stdarg.h中，它是标准库的一部分。这个头文件声明了一个类型va_list和三个宏---- va_start, va_arg, va_end。我们可以声明一个类型为va_list的变量，与这几个宏配合使用，访问参数的值。
+>
+> 由于将va_start,va_arg,va_end定义成了宏，可变参数的类型和个数在该函数中完全由程序代码控制，并不能智能地进行识别，所以导致编译器对可变参数的函数原型检查不够严格，难于查错，不利于写出高质量的代码。要创建一个可变参数函数，必须把省略号(…)放到参数列表后面。
+>
+>  一个可变参数函数是指一个函数拥有不定参数，即是它接受一个可变数目的参数。**可变参数函数在C语言存在安全问题**，如C语言在没有长度检查和类型检查，在传入过少的参数或不符的类型时可能会出现溢位的情况，更可能会被利用为攻击目标。所以，在设计函数时可以先考虑其它替补方案，例如以类型安全的方式----重载。
+>
+> 为了编写处理不同数量实参的函数，C++11新标准提供了两种主要的方法：如果所有的实参类型相同，可以传递一个名为std::initializer_list的标准库类型；如果实参的类型不同，我们可以编写一种特殊的函数，也就是所谓的可变参数模板。
 
 `log-internal.h`里面定义了很多不同类型不同级别的日志函数：
 
@@ -26,18 +55,18 @@ void event_msgx(const char *fmt, ...) EV_CHECK_FMT(1,2);
 void _event_debugx(const char *fmt, ...) EV_CHECK_FMT(1,2);
 ```
 
-但他们的实现大同小异，都是将可变参数用va\_list取出来，然后设置日志级别统一放到`_warn_helper`函数中打印
+但他们的实现大同小异，都是将可变参数用va_list取出来，然后设置日志级别统一放到`_warn_helper`函数中打印
 
 ```c
 void
 event_err(int eval, const char *fmt, ...)
 {
-    va_list ap; // 定义va_list参数用于访问可变参数
+	va_list ap; // 定义va_list参数用于访问可变参数
 
-    va_start(ap, fmt); // 开始访问可变参数，传入fmt标明可变参数开始的位置
-    _warn_helper(_EVENT_LOG_ERR, strerror(errno), fmt, ap); // 用统一的函数打印
-    va_end(ap);    // 结束对可变参数的访问
-    event_exit(eval); // 由于是err，所以打印完之后要退出程序
+	va_start(ap, fmt); // 开始访问可变参数，传入fmt标明可变参数开始的位置
+	_warn_helper(_EVENT_LOG_ERR, strerror(errno), fmt, ap); // 用统一的函数打印
+	va_end(ap);	// 结束对可变参数的访问
+	event_exit(eval); // 由于是err，所以打印完之后要退出程序
 }
 ```
 
@@ -47,26 +76,26 @@ event_err(int eval, const char *fmt, ...)
 static void
 _warn_helper(int severity, const char *errstr, const char *fmt, va_list ap)
 {
-    char buf[1024]; // 这里的buf定义了1024byte，意味着一条log最多只能有1024byte这么长
-    size_t len;
+	char buf[1024]; // 这里的buf定义了1024byte，意味着一条log最多只能有1024byte这么长
+	size_t len;
 
-    if (fmt != NULL)
-        evutil_vsnprintf(buf, sizeof(buf), fmt, ap); // 根据fmt将msg的内容读出来存到buf里
-    else
-        buf[0] = '\0';
+	if (fmt != NULL)
+		evutil_vsnprintf(buf, sizeof(buf), fmt, ap); // 根据fmt将msg的内容读出来存到buf里
+	else
+		buf[0] = '\0';
 
-    if (errstr) {
-        len = strlen(buf);
-        if (len < sizeof(buf) - 3) { // -3是因为有: 和\0这三个字符
-            evutil_snprintf(buf + len, sizeof(buf) - len, ": %s", errstr); // 将errstr附加到buf后面
-        }
-    }
+	if (errstr) {
+		len = strlen(buf);
+		if (len < sizeof(buf) - 3) { // -3是因为有: 和\0这三个字符
+			evutil_snprintf(buf + len, sizeof(buf) - len, ": %s", errstr); // 将errstr附加到buf后面
+		}
+	}
 
-    event_log(severity, buf); // 根据不同的级别打印出来
+	event_log(severity, buf); // 根据不同的级别打印出来
 }
 ```
 
-## 内存管理模块
+### 内存管理模块
 
 相关文件：
 
@@ -93,7 +122,7 @@ extern "C" {
 
 主要有这几个函数
 
-```text
+```
 void *event_mm_malloc_(size_t sz); // 申请sz的内存空间
 void *event_mm_calloc_(size_t count, size_t size); // 申请count*size的内存空间
 char *event_mm_strdup_(const char *s); // 将string s复制到一块内存空间
@@ -120,24 +149,24 @@ static void *(*_mm_malloc_fn)(size_t sz) = NULL;
 void *
 event_mm_malloc_(size_t sz)
 {
-    if (_mm_malloc_fn)
-        return _mm_malloc_fn(sz);
-    else
-        return malloc(sz);
+	if (_mm_malloc_fn)
+		return _mm_malloc_fn(sz);
+	else
+		return malloc(sz);
 }
 
 void
 event_set_mem_functions(void *(*malloc_fn)(size_t sz), // 设置自定义的内存分配函数
-            void *(*realloc_fn)(void *ptr, size_t sz),
-            void (*free_fn)(void *ptr))
+			void *(*realloc_fn)(void *ptr, size_t sz),
+			void (*free_fn)(void *ptr))
 {
-    _mm_malloc_fn = malloc_fn;
-    _mm_realloc_fn = realloc_fn;
-    _mm_free_fn = free_fn;
+	_mm_malloc_fn = malloc_fn;
+	_mm_realloc_fn = realloc_fn;
+	_mm_free_fn = free_fn;
 }
 ```
 
-## 锁、条件变量
+### 锁、条件变量：
 
 相关文件：
 
@@ -152,7 +181,7 @@ evthread_win32.c
 
 跟内存管理模块类似，libevent的锁支持自己定义锁（传入需要的函数指针）或者是用默认的锁。
 
-需要注意的是如果需要定制锁和内存管理模块，都必须在event\_base创建之前把自定义的函数指针传进去。
+需要注意的是如果需要定制锁和内存管理模块，都必须在event_base创建之前把自定义的函数指针传进去。
 
 libevent定义了两种类型的锁：
 
@@ -170,29 +199,29 @@ libevent定义了两种类型的锁：
 
 ```c
 struct evthread_lock_callbacks {
-    /** The current version of the locking API.  Set this to
-     * EVTHREAD_LOCK_API_VERSION */
-    int lock_api_version;
-    /** Which kinds of locks does this version of the locking API
-     * support?  A bitfield of EVTHREAD_LOCKTYPE_RECURSIVE and
-     * EVTHREAD_LOCKTYPE_READWRITE.
-     *
-     * (Note that RECURSIVE locks are currently mandatory, and
-     * READWRITE locks are not currently used.)
-     **/
-    unsigned supported_locktypes;
-    /** Function to allocate and initialize new lock of type 'locktype'.
-     * Returns NULL on failure. */
-    void *(*alloc)(unsigned locktype);
-    /** Funtion to release all storage held in 'lock', which was created
-     * with type 'locktype'. */
-    void (*free)(void *lock, unsigned locktype);
-    /** Acquire an already-allocated lock at 'lock' with mode 'mode'.
-     * Returns 0 on success, and nonzero on failure. */
-    int (*lock)(unsigned mode, void *lock);
-    /** Release a lock at 'lock' using mode 'mode'.  Returns 0 on success,
-     * and nonzero on failure. */
-    int (*unlock)(unsigned mode, void *lock);
+	/** The current version of the locking API.  Set this to
+	 * EVTHREAD_LOCK_API_VERSION */
+	int lock_api_version;
+	/** Which kinds of locks does this version of the locking API
+	 * support?  A bitfield of EVTHREAD_LOCKTYPE_RECURSIVE and
+	 * EVTHREAD_LOCKTYPE_READWRITE.
+	 *
+	 * (Note that RECURSIVE locks are currently mandatory, and
+	 * READWRITE locks are not currently used.)
+	 **/
+	unsigned supported_locktypes;
+	/** Function to allocate and initialize new lock of type 'locktype'.
+	 * Returns NULL on failure. */
+	void *(*alloc)(unsigned locktype);
+	/** Funtion to release all storage held in 'lock', which was created
+	 * with type 'locktype'. */
+	void (*free)(void *lock, unsigned locktype);
+	/** Acquire an already-allocated lock at 'lock' with mode 'mode'.
+	 * Returns 0 on success, and nonzero on failure. */
+	int (*lock)(unsigned mode, void *lock);
+	/** Release a lock at 'lock' using mode 'mode'.  Returns 0 on success,
+	 * and nonzero on failure. */
+	int (*unlock)(unsigned mode, void *lock);
 };
 
 /** Sets a group of functions that Libevent should use for locking.
@@ -214,35 +243,35 @@ struct timeval;
  * how to use locking on this platform.
  */
 struct evthread_condition_callbacks {
-    /** The current version of the conditions API.  Set this to
-     * EVTHREAD_CONDITION_API_VERSION */
-    int condition_api_version;
-    /** Function to allocate and initialize a new condition variable.
-     * Returns the condition variable on success, and NULL on failure.
-     * The 'condtype' argument will be 0 with this API version.
-     */
-    void *(*alloc_condition)(unsigned condtype);
-    /** Function to free a condition variable. */
-    void (*free_condition)(void *cond);
-    /** Function to signal a condition variable.  If 'broadcast' is 1, all
-     * threads waiting on 'cond' should be woken; otherwise, only on one
-     * thread is worken.  Should return 0 on success, -1 on failure.
-     * This function will only be called while holding the associated
-     * lock for the condition.
-     */
-    int (*signal_condition)(void *cond, int broadcast);
-    /** Function to wait for a condition variable.  The lock 'lock'
-     * will be held when this function is called; should be released
-     * while waiting for the condition to be come signalled, and
-     * should be held again when this function returns.
-     * If timeout is provided, it is interval of seconds to wait for
-     * the event to become signalled; if it is NULL, the function
-     * should wait indefinitely.
-     *
-     * The function should return -1 on error; 0 if the condition
-     * was signalled, or 1 on a timeout. */
-    int (*wait_condition)(void *cond, void *lock,
-        const struct timeval *timeout);
+	/** The current version of the conditions API.  Set this to
+	 * EVTHREAD_CONDITION_API_VERSION */
+	int condition_api_version;
+	/** Function to allocate and initialize a new condition variable.
+	 * Returns the condition variable on success, and NULL on failure.
+	 * The 'condtype' argument will be 0 with this API version.
+	 */
+	void *(*alloc_condition)(unsigned condtype);
+	/** Function to free a condition variable. */
+	void (*free_condition)(void *cond);
+	/** Function to signal a condition variable.  If 'broadcast' is 1, all
+	 * threads waiting on 'cond' should be woken; otherwise, only on one
+	 * thread is worken.  Should return 0 on success, -1 on failure.
+	 * This function will only be called while holding the associated
+	 * lock for the condition.
+	 */
+	int (*signal_condition)(void *cond, int broadcast);
+	/** Function to wait for a condition variable.  The lock 'lock'
+	 * will be held when this function is called; should be released
+	 * while waiting for the condition to be come signalled, and
+	 * should be held again when this function returns.
+	 * If timeout is provided, it is interval of seconds to wait for
+	 * the event to become signalled; if it is NULL, the function
+	 * should wait indefinitely.
+	 *
+	 * The function should return -1 on error; 0 if the condition
+	 * was signalled, or 1 on a timeout. */
+	int (*wait_condition)(void *cond, void *lock,
+	    const struct timeval *timeout);
 };
 ```
 
@@ -252,7 +281,7 @@ struct evthread_condition_callbacks {
 int evthread_set_lock_callbacks(const struct evthread_lock_callbacks *);
 
 int evthread_set_condition_callbacks(
-    const struct evthread_condition_callbacks *);
+	const struct evthread_condition_callbacks *);
 
 void evthread_set_id_callback(
     unsigned long (*id_fn)(void));
@@ -267,31 +296,31 @@ void evthread_set_id_callback(
 int
 evthread_use_pthreads(void)
 {
-    struct evthread_lock_callbacks cbs = {
-        EVTHREAD_LOCK_API_VERSION,
-        EVTHREAD_LOCKTYPE_RECURSIVE,
-        evthread_posix_lock_alloc,
-        evthread_posix_lock_free,
-        evthread_posix_lock,
-        evthread_posix_unlock
-    };
-    struct evthread_condition_callbacks cond_cbs = {
-        EVTHREAD_CONDITION_API_VERSION,
-        evthread_posix_cond_alloc,
-        evthread_posix_cond_free,
-        evthread_posix_cond_signal,
-        evthread_posix_cond_wait
-    };
-    /* Set ourselves up to get recursive locks. */
-    if (pthread_mutexattr_init(&attr_recursive))
-        return -1;
-    if (pthread_mutexattr_settype(&attr_recursive, PTHREAD_MUTEX_RECURSIVE))
-        return -1;
+	struct evthread_lock_callbacks cbs = {
+		EVTHREAD_LOCK_API_VERSION,
+		EVTHREAD_LOCKTYPE_RECURSIVE,
+		evthread_posix_lock_alloc,
+		evthread_posix_lock_free,
+		evthread_posix_lock,
+		evthread_posix_unlock
+	};
+	struct evthread_condition_callbacks cond_cbs = {
+		EVTHREAD_CONDITION_API_VERSION,
+		evthread_posix_cond_alloc,
+		evthread_posix_cond_free,
+		evthread_posix_cond_signal,
+		evthread_posix_cond_wait
+	};
+	/* Set ourselves up to get recursive locks. */
+	if (pthread_mutexattr_init(&attr_recursive))
+		return -1;
+	if (pthread_mutexattr_settype(&attr_recursive, PTHREAD_MUTEX_RECURSIVE))
+		return -1;
 
-    evthread_set_lock_callbacks(&cbs);
-    evthread_set_condition_callbacks(&cond_cbs);
-    evthread_set_id_callback(evthread_posix_get_id);
-    return 0;
+	evthread_set_lock_callbacks(&cbs);
+	evthread_set_condition_callbacks(&cond_cbs);
+	evthread_set_id_callback(evthread_posix_get_id);
+	return 0;
 }
 
 // evthread_win32.c
@@ -309,28 +338,28 @@ evthread_use_windows_threads(void)
 void
 evthread_enable_lock_debuging(void)
 {
-    struct evthread_lock_callbacks cbs = {
-        EVTHREAD_LOCK_API_VERSION,
-        EVTHREAD_LOCKTYPE_RECURSIVE,
-        debug_lock_alloc,
-        debug_lock_free,
-        debug_lock_lock,
-        debug_lock_unlock
-    };
-    if (_evthread_lock_debugging_enabled) // 如果已经支持了debug，就不需要再设置
-        return;
-    memcpy(&_original_lock_fns, &_evthread_lock_fns, // 将原本用的锁fns拷贝保存
-        sizeof(struct evthread_lock_callbacks));
-    memcpy(&_evthread_lock_fns, &cbs, // 定义新的锁fns
-        sizeof(struct evthread_lock_callbacks));
+	struct evthread_lock_callbacks cbs = {
+		EVTHREAD_LOCK_API_VERSION,
+		EVTHREAD_LOCKTYPE_RECURSIVE,
+		debug_lock_alloc,
+		debug_lock_free,
+		debug_lock_lock,
+		debug_lock_unlock
+	};
+	if (_evthread_lock_debugging_enabled) // 如果已经支持了debug，就不需要再设置
+		return;
+	memcpy(&_original_lock_fns, &_evthread_lock_fns, // 将原本用的锁fns拷贝保存
+	    sizeof(struct evthread_lock_callbacks));
+	memcpy(&_evthread_lock_fns, &cbs, // 定义新的锁fns
+	    sizeof(struct evthread_lock_callbacks));
 
-    memcpy(&_original_cond_fns, &_evthread_cond_fns, // 将原本用的条件fns拷贝保存
-        sizeof(struct evthread_condition_callbacks));
-    _evthread_cond_fns.wait_condition = debug_cond_wait; // 标记为debug
-    _evthread_lock_debugging_enabled = 1;
+	memcpy(&_original_cond_fns, &_evthread_cond_fns, // 将原本用的条件fns拷贝保存
+	    sizeof(struct evthread_condition_callbacks));
+	_evthread_cond_fns.wait_condition = debug_cond_wait; // 标记为debug
+	_evthread_lock_debugging_enabled = 1;
 
-    /* XXX return value should get checked. */
-    event_global_setup_locks_(0);
+	/* XXX return value should get checked. */
+	event_global_setup_locks_(0);
 }
 ```
 
@@ -338,12 +367,12 @@ evthread_enable_lock_debuging(void)
 
 ```c
 struct debug_lock {
-    unsigned locktype; // 记录锁原本的类型，debug的锁申请的都会是可重入锁，非可重入锁将会在debug层进行控制和检查
-    unsigned long held_by; // 记录锁被哪个线程持有，保存线程id，在可重入和释放锁的时候检查held_by是否等于当前线程的id
-    /* XXXX if we ever use read-write locks, we will need a separate
-     * lock to protect count. */
-    int count; // 记录可重入锁被进入的次数，若锁原本是非可重入锁，会检查这个值小于1
-    void *lock; // 保存真正的锁
+	unsigned locktype; // 记录锁原本的类型，debug的锁申请的都会是可重入锁，非可重入锁将会在debug层进行控制和检查
+	unsigned long held_by; // 记录锁被哪个线程持有，保存线程id，在可重入和释放锁的时候检查held_by是否等于当前线程的id
+	/* XXXX if we ever use read-write locks, we will need a separate
+	 * lock to protect count. */
+	int count; // 记录可重入锁被进入的次数，若锁原本是非可重入锁，会检查这个值小于1
+	void *lock; // 保存真正的锁
 };
 ```
 
@@ -353,83 +382,54 @@ struct debug_lock {
 static int
 debug_cond_wait(void *_cond, void *_lock, const struct timeval *tv)
 {
-    int r;
-    struct debug_lock *lock = _lock;
-    EVUTIL_ASSERT(lock); 
-    EVLOCK_ASSERT_LOCKED(_lock); // 检查lock
-    evthread_debug_lock_mark_unlocked(0, lock); // 记录lock被释放了
-    r = _original_cond_fns.wait_condition(_cond, lock->lock, tv); // 原本的cond_wait
-    evthread_debug_lock_mark_locked(0, lock); // 记录lock被获取了
-    return r;
+	int r;
+	struct debug_lock *lock = _lock;
+	EVUTIL_ASSERT(lock); 
+	EVLOCK_ASSERT_LOCKED(_lock); // 检查lock
+	evthread_debug_lock_mark_unlocked(0, lock); // 记录lock被释放了
+	r = _original_cond_fns.wait_condition(_cond, lock->lock, tv); // 原本的cond_wait
+	evthread_debug_lock_mark_locked(0, lock); // 记录lock被获取了
+	return r;
 }
 ```
 
-也就是在原本的cond\_wait的基础上检查调用前的释放锁和调用后的获取锁的状态是否正确。
+也就是在原本的cond_wait的基础上检查调用前的释放锁和调用后的获取锁的状态是否正确。
 
-## 锁的使用
+### 锁的使用
 
 相关文件：
 
-```text
+```
 evthread-internal.h
 ```
 
-Libevent中，一些函数支持多线程。一般都是使用锁进行线程同步。在Libevent的代码中，一般是使用`EVTHREAD_ALLOC_LOCK`宏获取一个锁变量，EVBASE\_ACQUIRE\_LOCK宏进行加锁，`EVBASE_RELEASE_LOCK`宏进行解锁。在阅读Libevent源代码中，一般都只会看到`EVBASE_ACQUIRE_LOCK`和`EVBASE_RELEASE_LOCK`。锁的内部实现是看不见的。
+Libevent中，一些函数支持多线程。一般都是使用锁进行线程同步。在Libevent的代码中，一般是使用EVTHREAD_ALLOC_LOCK宏获取一个锁变量，EVBASE_ACQUIRE_LOCK宏进行加锁，EVBASE_RELEASE_LOCK宏进行解锁。在阅读Libevent源代码中，一般都只会看到EVBASE_ACQUIRE_LOCK和EVBASE_RELEASE_LOCK。锁的内部实现是看不见的。
 
 ```c
+
 /** Return the ID of the current thread, or 1 if threading isn't enabled. */
 #define EVTHREAD_GET_ID() \
-    (_evthread_id_fn ? _evthread_id_fn() : 1)
+	(_evthread_id_fn ? _evthread_id_fn() : 1)
 
 /** Return true iff we're in the thread that is currently (or most recently)
  * running a given event_base's loop. Requires lock. */
-#define EVBASE_IN_THREAD(base)                 \
-    (_evthread_id_fn == NULL ||             \
-    (base)->th_owner_id == _evthread_id_fn())
+#define EVBASE_IN_THREAD(base)				 \
+	(_evthread_id_fn == NULL ||			 \
+	(base)->th_owner_id == _evthread_id_fn())
 ```
 
 基本是通过宏对要用到的锁操作进行封装。
 
-## 其他
+### 其他
 
-\(1\) 看到了文件里有
-
-```text
-#ifdef __GNUC__
-#define EV_CHECK_FMT(a,b) __attribute__((format(printf, a, b)))
-#define EV_NORETURN __attribute__((noreturn))
-#endif
-```
-
-这样的宏。
-
-`__GNUC__`指的是用GNU编译器来编译，`__attribute__((xxx))`是利用GNU编译器提供的一些特性，比如：
-
-`__attribute__((xxx))`告诉编译器这个函数不会返回，因而编译器可以做一些优化；
-
-`__attribute__((format(printf, a, b)))`是对a,b进行格式化检查，printf\(\)的第一个参数是字符串格式，第二个参数是可变参数，将需要用到的变量都传进来。在函数后面加上了这个检查后会在编译期间检查出格式和可变参数是否对应；
-
-可以看到`log-internal.h`里面出现了`...`可变参数，这是c++由c中继承来的特性，用`...`来表示可变参数。
-
-以下是一些关于c风格的可变参数的资料：
-
-> C/C++支持函数的可变参数列表，这个可变参数列表是通过宏来实现的，这些宏定义在头文件stdarg.h中，它是标准库的一部分。这个头文件声明了一个类型va\_list和三个宏---- va\_start, va\_arg, va\_end。我们可以声明一个类型为va\_list的变量，与这几个宏配合使用，访问参数的值。
->
-> 由于将va\_start,va\_arg,va\_end定义成了宏，可变参数的类型和个数在该函数中完全由程序代码控制，并不能智能地进行识别，所以导致编译器对可变参数的函数原型检查不够严格，难于查错，不利于写出高质量的代码。要创建一个可变参数函数，必须把省略号\(…\)放到参数列表后面。
->
-> 一个可变参数函数是指一个函数拥有不定参数，即是它接受一个可变数目的参数。**可变参数函数在C语言存在安全问题**，如C语言在没有长度检查和类型检查，在传入过少的参数或不符的类型时可能会出现溢位的情况，更可能会被利用为攻击目标。所以，在设计函数时可以先考虑其它替补方案，例如以类型安全的方式----重载。
->
-> 为了编写处理不同数量实参的函数，C++11新标准提供了两种主要的方法：如果所有的实参类型相同，可以传递一个名为std::initializer\_list的标准库类型；如果实参的类型不同，我们可以编写一种特殊的函数，也就是所谓的可变参数模板。
-
-\(2\) 经常在代码中的宏定义里面看到`do {xxx} while(0)`对于它的作用感到困惑，其实这是在宏定义里面的一个常用写法，类似于`if(1) {xxx} else`，作用是类似`{xxx}`一样将代码合为一个整体，避免宏替换的时候出现编译错误。
+经常在代码中的宏定义里面看到`do {xxx} while(0)`对于它的作用感到困惑，其实这是在宏定义里面的一个常用写法，类似于`if(1) {xxx} else`，作用是类似`{xxx}`一样将代码合为一个整体，避免宏替换的时候出现编译错误。
 
 详见：
 
-[https://stackoverflow.com/questions/154136/why-use-apparently-meaningless-do-while-and-if-else-statements-in-macros](https://stackoverflow.com/questions/154136/why-use-apparently-meaningless-do-while-and-if-else-statements-in-macros)
+https://stackoverflow.com/questions/154136/why-use-apparently-meaningless-do-while-and-if-else-statements-in-macros
 
-## 参考资料
+### 参考资料
 
-[https://blog.csdn.net/luotuo44/category\_9262895.html](https://blog.csdn.net/luotuo44/category_9262895.html)
+https://blog.csdn.net/luotuo44/category_9262895.html
 
-[http://www.wangafu.net/~nickm/libevent-book/Ref1\_libsetup.html](http://www.wangafu.net/~nickm/libevent-book/Ref1_libsetup.html)
-
+http://www.wangafu.net/~nickm/libevent-book/Ref1_libsetup.html
