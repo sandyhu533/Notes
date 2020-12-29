@@ -64,7 +64,7 @@ FT协议是用于logging channel的协议
 
 FT协议的流程如下图
 
-![](.gitbook/assets/image.png)
+![](.gitbook/assets/image%20%286%29%20%281%29.png)
 
 但这里存在一个小问题，如果 primary 宕机了，backup 不能判断它是在发送了 output 之前还是之后宕机的，因此 backup 会再发送一次 output，但可以通过以下方式解决：
 
