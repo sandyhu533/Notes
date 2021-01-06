@@ -9,5 +9,6 @@
 * [MIT6.824 - CRAQ](mit6.824-craq.md)
 * [Libevent - Source Code \(1\)](libevent-source-code.md)
 * [Libevent - Source Code \(2\)](libevent-source-code-2.md)
+* [Libevent - Source Code \(4\)](libevent-source-code-4.md)
 * [Libevent - Source Code \(3\)](libevent-source-code-3.md)
 
