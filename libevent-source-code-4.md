@@ -54,7 +54,7 @@ const struct eventop epollops = {
 };
 ```
 
-先看他们的共同初始化函数`epoll_init`
+先看他们的共同初始化函数`epoll_init`:
 
 ```c
 static void *
@@ -151,7 +151,7 @@ epoll_init(struct event_base *base)
 先看`event_changelist_add`：
 
 ```c
-// epoll.c
+// evmap.c
 int
 event_changelist_add(struct event_base *base, evutil_socket_t fd, short old, short events,
     void *p)
@@ -192,13 +192,14 @@ event_changelist_get_or_construct(struct event_changelist *changelist,
 {
 	struct event_change *change;
 
-  // fdinfo在changelist里的id+1，用这个能够避免使这个值为负，在呈现上更加优雅
+  // fdinfo在changelist里的id+1，用这个能够避免使这个值为负，更加优雅
 	if (fdinfo->idxplus1 == 0) {
     // 如果没有就构造
 		int idx;
 		EVUTIL_ASSERT(changelist->n_changes <= changelist->changes_size);
 
 		if (changelist->n_changes == changelist->changes_size) {
+      // 初始大小为64，每次扩容两倍，用realloc将旧的列表移到新的列表
 			if (event_changelist_grow(changelist) < 0)
 				return NULL;
 		}
@@ -216,6 +217,114 @@ event_changelist_get_or_construct(struct event_changelist *changelist,
 		EVUTIL_ASSERT(change->fd == fd);
 	}
 	return change;
+}
+```
+
+再看`epoll_nochangelist_add`:
+
+```c
+static int
+epoll_nochangelist_add(struct event_base *base, evutil_socket_t fd,
+    short old, short events, void *p)
+{
+	struct event_change ch;
+	ch.fd = fd;
+	ch.old_events = old;
+	ch.read_change = ch.write_change = 0;
+	if (events & EV_WRITE)
+		ch.write_change = EV_CHANGE_ADD |
+		    (events & EV_ET);
+	if (events & EV_READ)
+		ch.read_change = EV_CHANGE_ADD |
+		    (events & EV_ET);
+
+	return epoll_apply_one_change(base, base->evbase, &ch);
+}
+```
+
+观察一下对于`event_change`的设定，数据结构包含`fd, old_events, read_change, write_change`，`event_changelist_add`和`event_nochangelist_add`对于`fd和old_events`的设置相同，但`changelist`里面会把event的有效位设置为`EV_ET|EV_PERSIST|EV_SIGNAL`，而`nochangelist`里面只有`EV_ET`。
+
+看一下`event_changelist_del`和`epoll_nochangelist_del`。前者判断了changelist里面有没有之前添加上去的`add`读/写/signal事件，如果有则直接清零，没有再标记`EV_CHANGE_DEL`并做系统调用。后者直接标记并做系统调用。
+
+看一下`epoll_dispatch`：
+
+```c
+static int
+epoll_dispatch(struct event_base *base, struct timeval *tv)
+{
+	struct epollop *epollop = base->evbase;
+	struct epoll_event *events = epollop->events;
+	int i, res;
+	long timeout = -1;
+
+	if (tv != NULL) {
+		timeout = evutil_tv_to_msec(tv);
+		if (timeout < 0 || timeout > MAX_EPOLL_TIMEOUT_MSEC) {
+			/* Linux kernels can wait forever if the timeout is
+			 * too big; see comment on MAX_EPOLL_TIMEOUT_MSEC. */
+			timeout = MAX_EPOLL_TIMEOUT_MSEC;
+		}
+	}
+	
+  // 将changelist里面的change读出来并进行系统调用
+	epoll_apply_changes(base);
+  // 读完之后remove掉changelist里面的chnge
+	event_changelist_remove_all(&base->changelist, base);
+
+	EVBASE_RELEASE_LOCK(base, th_base_lock);
+
+  // 调用epoll_wait，一直阻塞到timeout时间过或者发生了事件
+	res = epoll_wait(epollop->epfd, events, epollop->nevents, timeout);
+
+	EVBASE_ACQUIRE_LOCK(base, th_base_lock);
+
+	if (res == -1) {
+		if (errno != EINTR) {
+			event_warn("epoll_wait");
+			return (-1);
+		}
+
+		return (0);
+	}
+
+	event_debug(("%s: epoll_wait reports %d", __func__, res));
+	EVUTIL_ASSERT(res <= epollop->nevents);
+	
+  // 挨个激活epoll返回的event
+	for (i = 0; i < res; i++) {
+		int what = events[i].events;
+		short ev = 0;
+
+		if (what & (EPOLLHUP|EPOLLERR)) {
+			ev = EV_READ | EV_WRITE;
+		} else {
+			if (what & EPOLLIN)
+				ev |= EV_READ;
+			if (what & EPOLLOUT)
+				ev |= EV_WRITE;
+		}
+
+		if (!ev)
+			continue;
+
+		evmap_io_active(base, events[i].data.fd, ev | EV_ET);
+	}
+
+	if (res == epollop->nevents && epollop->nevents < MAX_NEVENT) {
+		/* We used all of the event space this time.  We should
+		   be ready for more events next time. */
+		int new_nevents = epollop->nevents * 2;
+		struct epoll_event *new_events;
+
+		new_events = mm_realloc(epollop->events,
+		    new_nevents * sizeof(struct epoll_event));
+		if (new_events) {
+			epollop->events = new_events;
+			epollop->nevents = new_nevents;
+		}
+	}
+
+	return (0);
 }
 ```
 
